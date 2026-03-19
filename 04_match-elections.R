@@ -118,11 +118,12 @@ member_winner_key <- member_fmt |>
     lev_dist_full_name = map2_dbl(candidate_norm, name_full_norm, safe_adist),
     lev_dist_last_name = map2_dbl(candidate_last_norm, name_last_norm, safe_adist),
     lev_dist_first_name = map2_dbl(candidate_first_norm, name_first_norm, safe_adist)
-    ) |>
-  arrange(election_id, lev_dist_last_name, lev_dist_first_name, lev_dist_full_name) |>
-  group_by(election_id) |>
+  ) |>
+  filter(lev_dist_last_name < 5) |>
+  arrange(id_election_bio, lev_dist_last_name, lev_dist_first_name, lev_dist_full_name) |>
+  group_by(id_election_bio) |>
   slice(1) |>
-  ungroup() |> 
+  ungroup() |>
   select(election_id, id_election_bio)
 
 member_fmt_winner <-

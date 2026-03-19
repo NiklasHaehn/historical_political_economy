@@ -17,10 +17,11 @@ data_tdm <- files |>
   janitor::clean_names() |> 
   rename(state = publisher_province) |> 
   left_join(
-    ccesMRPprep::states_key |> 
+    ccesMRPprep::states_key |>
       select(state = st, region),
     by = "state"
-  )
+  ) |>
+  mutate(publication_id = str_squish(str_remove(publication_title, "\\s*\\(.*")))
 
 publication_weekly_articles <- data_tdm |>
   transmute(
@@ -149,6 +150,8 @@ event_study_reg_data <- event_weeks |>
   ) |>
   mutate(is_treated_region = as.integer(region == treated_region)) |>
   filter(is_treated_region == 1L | in_vacancy == 0L)
+
+write_csv(event_study_reg_data, "data/fmt/09_event_study_reg_data.csv")
 
 event_study_region_mod <- fixest::feols(
   n_articles ~ is_treated_region + i(event_time, is_treated_region, ref = -1) | event_id + event_time,

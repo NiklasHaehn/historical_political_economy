@@ -194,7 +194,13 @@ match_member_role <- function(events, members, role = c("original", "winner")) {
       group_by(special_election_id) |>
       slice(1) |>
       ungroup() |>
-    # mutate(across(all_of(keep_cols), \(x) replace(x, !match_ok, NA))) |>
+      mutate(
+        match_quality = lev_dist_last_name < 10,
+        across(
+          c(id_bioguide, id_election_bio, name_full_norm, term_start, term_end, term_note, Special_Election_llama3),
+          ~if_else(!match_quality, NA, .x)
+        )
+      ) |>
     select(
       special_election_id, id_bioguide, id_election_bio,
       state, candidate_name_norm, name_full_norm,
@@ -285,8 +291,7 @@ match_cause_of_death <- function(events, cause_data) {
       cause_of_death_category,
       cause_of_death_match_type = "distance_date_window",
       cause_of_death_match_dist = lev_dist_full_name
-    ) |>
-    filter(!is.na(cause_of_death))
+    )
 }
 
 
@@ -393,9 +398,19 @@ cause_of_death_match <- match_cause_of_death(member_elections, cause_of_death)
 cause_of_death_match_event <- match_cause_of_death(event_base, cause_of_death)
 
 event_base <-
-cause_of_death_match_event |> 
-  select(special_election_id, starts_with("cause_of_death")) |> 
-  right_join(event_base, by = "special_election_id")
+cause_of_death_match_event |>
+  select(special_election_id, starts_with("cause_of_death")) |>
+  right_join(event_base, by = "special_election_id") |>
+  mutate(
+    cause_of_death_category = coalesce(
+      cause_of_death_category,
+      if_else(cause_of_vacancy_fmt == "Died", "unknown", NA_character_)
+    )
+  ) |>
+  mutate(across(
+    starts_with("cause_of_death"),
+    ~if_else(coalesce(cause_of_vacancy_fmt, "") != "Died", NA, .x)
+  ))
   
 member_event_base <- member_elections |> 
   tidylog::left_join(cause_of_death_match, by = c("id_election_bio"), suffix = c("", ".x")) |> 
@@ -408,6 +423,89 @@ member_event_reduced <-
          candidate_first_norm, candidate_last_norm, candidate_first_last_norm, candidate_norm,
          candidate_role, term_start, term_end, term_congress, term_party) |> 
   distinct()
+
+# Diagnostic: Wikipedia Special Elections x Bio Guide LLM Indicator ----------
+
+elections_original <- event_base |>
+  filter(candidate_role == "original") |>
+  distinct(special_election_id, match_year, id_bioguide_winner, Special_Election_llama3_winner)
+
+cat("\n=== Diagnostic: Wikipedia Special Elections vs. Bio Guide LLM Indicator ===\n\n")
+
+cat(glue::glue(
+  "Total special elections (Wikipedia):  {n_distinct(elections_original$special_election_id)}\n",
+  "Bioguide match (winner):              {sum(!is.na(elections_original$id_bioguide_winner))} ",
+  "({round(mean(!is.na(elections_original$id_bioguide_winner)) * 100, 1)}%)\n\n"
+))
+
+elections_original |>
+  mutate(era = cut(
+    match_year,
+    breaks = c(1788, 1900, 1950, 2025),
+    labels = c("Before 1900", "1900-1950", "1950 onward")
+  )) |>
+  group_by(era) |>
+  summarise(
+    n         = n(),
+    llm_yes   = sum(Special_Election_llama3_winner == "Yes", na.rm = TRUE),
+    share_pct = round(llm_yes / n * 100, 1),
+    .groups   = "drop"
+  ) |>
+  print()
+
+cat("\n")
+
+# Diagnostic: Cause of Vacancy (Wikipedia) x Cause of Death Match -----------
+
+vacancies_original <- event_base |>
+  filter(candidate_role == "original") |>
+  distinct(
+    special_election_id, match_year,
+    cause_of_vacancy_fmt, cause_of_death, cause_of_death_category
+  ) |>
+  mutate(cod_matched = !is.na(cause_of_death))
+
+cat("=== Diagnostic: Cause of Vacancy vs. Cause of Death Match ===\n\n")
+
+cat("Cross-tabulation: cause_of_vacancy_fmt x CoD matched\n")
+vacancies_original |>
+  count(cause_of_vacancy_fmt, cod_matched) |>
+  mutate(
+    cod_matched = if_else(cod_matched, "CoD matched", "No CoD match"),
+    cause_of_vacancy_fmt = coalesce(cause_of_vacancy_fmt, "(missing)")
+  ) |>
+  pivot_wider(names_from = cod_matched, values_from = n, values_fill = 0L) |>
+  print()
+
+cat("\nAmong 'Died' vacancies: cause-of-death category breakdown\n")
+vacancies_original |>
+  filter(cause_of_vacancy_fmt == "Died") |>
+  count(cause_of_death_category, name = "n") |>
+  mutate(
+    cause_of_death_category = coalesce(cause_of_death_category, "(no match)"),
+    share_pct = round(n / sum(n) * 100, 1)
+  ) |>
+  arrange(desc(n)) |>
+  print()
+
+cat("\nAmong 'Died' vacancies: CoD match rate by era\n")
+vacancies_original |>
+  filter(cause_of_vacancy_fmt == "Died") |>
+  mutate(era = cut(
+    match_year,
+    breaks = c(1788, 1900, 1950, 2025),
+    labels = c("Before 1900", "1900-1950", "1950 onward")
+  )) |>
+  group_by(era) |>
+  summarise(
+    n           = n(),
+    cod_matched = sum(cod_matched),
+    share_pct   = round(cod_matched / n * 100, 1),
+    .groups     = "drop"
+  ) |>
+  print()
+
+cat("\n")
 
 write_csv(member_event_base, file = "data/fmt/member_event_base.csv")
 write_csv(event_base, file = "data/fmt/event_base.csv")

@@ -1,0 +1,8 @@
+Outcome,Specification,ATT,SE,CI_low,CI_high,p_value,PreTrend_F,PreTrend_p,PassesPT
+Article volume,Pooled,-0.6941,2.5955,-5.7813,4.3932,0.7892,1.041,0.4068,TRUE
+Article volume,Exogenous deaths,-4.0051,3.0187,-9.9217,1.9116,0.1846,2.026,0.0224,FALSE
+Article volume,Post-1970,-0.1924,5.0639,-10.1176,9.7328,0.9697,1.506,0.1216,TRUE
+Partisan tone,Pooled,0.0282,0.0137,0.0013,0.055,0.0396,1.729,0.1251,TRUE
+Partisan tone,Exogenous deaths,0.0598,0.0283,0.0044,0.1152,0.0344,2.568,0.027,FALSE
+Partisan tone,Illness (slow),0.09,0.0121,0.0662,0.1138,0,3.799,0.0032,FALSE
+Partisan tone,Post-1970,0.0288,0.0138,0.0017,0.0558,0.0372,1.674,0.1383,TRUE

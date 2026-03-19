@@ -1,5 +1,6 @@
 library(tidyverse)
 library(glue)
+source("paper_style.R")
 
 in_file <- "data/fmt/event_base.csv"
 out_dir <- "paper/figures/maps"
@@ -32,12 +33,7 @@ region_centers <- state_centers |>
   group_by(region) |>
   summarise(long = mean(long), lat = mean(lat), .groups = "drop")
 
-map_theme <- theme_void(base_size = 11) +
-  theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    legend.title = element_text(face = "bold"),
-    strip.text = element_text(face = "bold")
-  )
+map_theme <- theme_map
 
 # 1) Number of Special Elections by state
 state_counts <- state_key |>
@@ -57,7 +53,7 @@ plot_state <- us_map |>
     inherit.aes = FALSE
   ) +
   coord_map("albers", lat0 = 39, lat1 = 45) +
-  scale_fill_viridis_c(option = "C", direction = -1, name = "Count") +
+  scale_fill_gradient(low = pal$pre, high = "#08519c", name = "Count", na.value = "grey90") +
   labs(title = "Special Elections by State") +
   map_theme
 
@@ -84,7 +80,7 @@ plot_region <- us_map |>
     inherit.aes = FALSE
   ) +
   coord_map("albers", lat0 = 39, lat1 = 45) +
-  scale_fill_viridis_c(option = "C", direction = -1, name = "Count") +
+  scale_fill_gradient(low = pal$pre, high = "#08519c", name = "Count", na.value = "grey90") +
   labs(title = "Special Elections by Region") +
   map_theme
 
@@ -108,15 +104,18 @@ cause_labels <- c(
   unknown = "Unknown"
 )
 
-cause_levels <- deaths |> 
+cause_levels <- deaths |>
+  filter(!is.na(cause_of_death_category)) |>
   count(cause_of_death_category, sort = TRUE) |>
   pull(cause_of_death_category)
 
 state_cause_counts <- deaths |>
+  filter(!is.na(cause_of_death_category), !is.na(state)) |>
   count(state, cause_of_death_category, name = "n_special") |>
   left_join(state_key, by = "state") |>
+  filter(!is.na(cause_of_death_category)) |>
   mutate(
-      cause_of_death_category = factor(
+    cause_of_death_category = factor(
       cause_of_death_category,
       levels = cause_levels,
       labels = cause_levels |> purrr::map_chr(\(x) cause_labels[[x]] %||% x)
@@ -129,6 +128,7 @@ plot_state_cause <- us_map |>
     by = c("region" = "state_name"),
     relationship = "many-to-many"
   ) |>
+  filter(!is.na(cause_of_death_category)) |>
   ggplot(aes(long, lat, group = group, fill = n_special)) +
   geom_polygon(color = "white", linewidth = 0.1) +
   geom_text(
@@ -147,16 +147,18 @@ plot_state_cause <- us_map |>
   ) +
   coord_map("albers", lat0 = 39, lat1 = 45) +
   facet_wrap(vars(cause_of_death_category), ncol = 3) +
-  scale_fill_viridis_c(option = "C", direction = -1, name = "Count") +
+  scale_fill_gradient(low = pal$pre, high = "#08519c", name = "Count", na.value = "grey90") +
   labs(title = "Special Elections by State and Cause of Death") +
   map_theme
 
 # 4) Number of Special Elections by region and cause of death
 region_cause_counts <- deaths |>
+  filter(!is.na(cause_of_death_category), !is.na(region)) |>
   count(region, cause_of_death_category, name = "n_special") |>
   complete(region = unique(state.region), cause_of_death_category = cause_levels, fill = list(n_special = 0L)) |>
+  filter(!is.na(cause_of_death_category), !is.na(region)) |>
   mutate(
-      cause_of_death_category = factor(
+    cause_of_death_category = factor(
       cause_of_death_category,
       levels = cause_levels,
       labels = cause_levels |> purrr::map_chr(\(x) cause_labels[[x]] %||% x)
@@ -171,6 +173,7 @@ plot_region_cause <- us_map |>
     by = c("region" = "state_name"),
     relationship = "many-to-many"
   ) |>
+  filter(!is.na(cause_of_death_category)) |>
   ggplot(aes(long, lat, group = group, fill = n_special)) +
   geom_polygon(color = "white", linewidth = 0.1) +
   geom_text(
@@ -185,7 +188,7 @@ plot_region_cause <- us_map |>
   ) +
   coord_map("albers", lat0 = 39, lat1 = 45) +
   facet_wrap(vars(cause_of_death_category), ncol = 3) +
-  scale_fill_viridis_c(option = "C", direction = -1, name = "Count") +
+  scale_fill_gradient(low = pal$pre, high = "#08519c", name = "Count", na.value = "grey90") +
   labs(title = "Special Elections by Region and Cause of Death") +
   map_theme
 

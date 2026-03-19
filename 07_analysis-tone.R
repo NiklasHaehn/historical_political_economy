@@ -45,6 +45,7 @@ articles <- files |>
     by = c("state_article" = "state")
   ) |>
   mutate(
+    publication_id = str_squish(str_remove(publication_title, "\\s*\\(.*")),
     article_date = ymd(date),
     article_week = floor_date(article_date, unit = "week", week_start = 1),
     article_id = coalesce(as.character(goid), glue("article_{row_number()}"))
@@ -127,46 +128,26 @@ prompt_headline_tone <- function(headline) {
     "You are a political text annotation assistant.
 
 Task:
-Classify the headline based on tone toward U.S. partisan actors.
+Classify the partisan framing of this U.S. newspaper headline.
 
-Return:
-- 0 = balanced or neutral political headline
-- 1 = biased political headline
-- NA = not a U.S. political headline or insufficient political context
-
-Definition of U.S. partisan actors:
-Democrats, Republicans, Democratic Party, Republican Party, GOP, liberals, conservatives, the left, the right, or similar explicitly political sides in U.S. politics.
+Return ONE of:
+- D  = headline favors Democrats / the liberal side, or criticizes Republicans / the conservative side
+- R  = headline favors Republicans / the conservative side, or criticizes Democrats / the liberal side
+- N  = neutral or balanced — no clear partisan slant
+- NA = not a U.S. political headline, or insufficient context to determine partisan framing
 
 Definitions:
-- 0: The headline is about U.S. politics and uses neutral, factual, or symmetric language. It does not clearly favor or disfavor one partisan side.
-- 1: The headline is about U.S. politics and uses asymmetric or evaluative language that favors or disfavors one partisan side.
-- NA: The headline is not about U.S. politics, is not political news, or is too vague to determine partisan tone.
-
-Code as 1 if the headline:
-- praises one side,
-- blames one side,
-- portrays one side as more competent, moral, extreme, dangerous, dishonest, or responsible,
-- uses loaded or judgmental language toward one side.
-
-Code as 0 if the headline:
-- is descriptive,
-- reports conflict symmetrically,
-- states a political development without clear evaluative slant.
-
-Code as NA if:
-- the headline is non-political,
-- the headline is not about U.S. politics,
-- no clear political context is present,
-- the text is too incomplete or vague to evaluate.
+- D: The wording explicitly portrays Democrats, liberals, or the left more favorably, or portrays Republicans, conservatives, or the right more negatively (e.g., loaded praise for Democrats, blame language toward Republicans).
+- R: The wording explicitly portrays Republicans, conservatives, or the right more favorably, or portrays Democrats, liberals, or the left more negatively.
+- N: Neutral, factual, or symmetric reporting. No evaluative slant toward either side. Includes straightforward reporting of political events, votes, or statements without loaded language.
+- NA: The headline is not about U.S. politics, involves no partisan actors, or is too vague or incomplete to classify.
 
 Rules:
-1. Use only the headline text.
-2. Do not use outside knowledge.
-3. Only evaluate explicit wording in the headline.
-4. If only one partisan side is mentioned:
-   - return 1 if the wording is evaluative or loaded,
-   - return 0 if the wording is neutral and factual.
-5. Return only one value: 0, 1, or NA.
+1. Use only the headline text. Do not use outside knowledge.
+2. Evaluate explicit wording only — do not infer unstated meanings or assume bias from context.
+3. Coverage of only one party is NOT automatically partisan. Return D or R only if the wording itself is evaluative or loaded. If coverage is neutral and factual, return N even if only one party is mentioned.
+4. If uncertain between D and R, return N.
+5. Return only one value: D, R, N, or NA.
 
 Headline: {headline}
 "
@@ -178,13 +159,18 @@ normalize_label <- function(x) {
     coalesce("") |>
     str_to_upper() |>
     str_squish() |>
-    str_extract_all("\\b(?:NA|N/A|0|1)\\b") |>
-    map_chr(
-      ~ .x |>
-        first() |>
-        coalesce("NA") |>
-        str_replace("N/A", "NA")
-    )
+    map_chr(~ {
+      s <- .x
+      first_token <- str_extract(s, "^[A-Z/]+")
+      if (!is.na(first_token) && first_token %in% c("D", "R", "N", "NA", "N/A")) {
+        return(if (first_token == "N/A") "NA" else first_token)
+      }
+      if (str_detect(s, "\\bD\\b")) return("D")
+      if (str_detect(s, "\\bR\\b")) return("R")
+      if (str_detect(s, "\\bNA\\b|\\bN/A\\b")) return("NA")
+      if (str_detect(s, "\\bN\\b|\\bNEUTRAL\\b")) return("N")
+      "NA"
+    })
 }
 
 classify_headline <- function(headline) {
@@ -203,25 +189,37 @@ headline_pool <- event_articles_individual |>
 
 headline_labels_existing <- if (file.exists(labels_out)) {
   labels_raw <- read_csv(labels_out, show_col_types = FALSE)
-  if ("llm_completed" %in% names(labels_raw)) {
+  labels_parsed <- if ("llm_completed" %in% names(labels_raw)) {
     labels_raw |>
       transmute(
-        title = as.character(title),
+        title              = as.character(title),
         headline_tone_label = as.character(headline_tone_label),
-        llm_completed = as.integer(llm_completed)
-      ) |>
-      filter(!(is.na(title) | str_squish(title) == "")) |>
-      distinct(title, .keep_all = TRUE)
+        llm_completed      = as.integer(llm_completed)
+      )
   } else {
     labels_raw |>
       transmute(
-        title = as.character(title),
+        title              = as.character(title),
         headline_tone_label = NA_character_,
-        llm_completed = 0L
-      ) |>
-      filter(!(is.na(title) | str_squish(title) == "")) |>
-      distinct(title, .keep_all = TRUE)
+        llm_completed      = 0L
+      )
   }
+  old_format_n <- sum(
+    labels_parsed$headline_tone_label %in% c("0", "1") &
+      !is.na(labels_parsed$headline_tone_label),
+    na.rm = TRUE
+  )
+  if (old_format_n > 0) {
+    message(glue("{old_format_n} cached labels use the old 0/1 scheme — resetting for re-classification."))
+    labels_parsed <- labels_parsed |>
+      mutate(llm_completed = if_else(
+        headline_tone_label %in% c("0", "1") & !is.na(headline_tone_label),
+        0L, llm_completed
+      ))
+  }
+  labels_parsed |>
+    filter(!(is.na(title) | str_squish(title) == "")) |>
+    distinct(title, .keep_all = TRUE)
 } else {
   tibble(title = character(), headline_tone_label = character(), llm_completed = integer())
 }
@@ -273,10 +271,11 @@ event_articles_tone <- event_articles_individual |>
   left_join(headline_labels, by = "title") |>
   mutate(
     headline_tone_label = if_else(is.na(headline_tone_label), "NA", normalize_label(headline_tone_label)),
-    headline_tone = case_when(
-      headline_tone_label == "1" ~ 1L,
-      headline_tone_label == "0" ~ 0L,
-      TRUE ~ NA_integer_
+    headline_slant = case_when(
+      headline_tone_label == "D" ~  1L,
+      headline_tone_label == "N" ~  0L,
+      headline_tone_label == "R" ~ -1L,
+      TRUE                       ~ NA_integer_
     )
   )
 
@@ -290,18 +289,21 @@ write_csv(headline_labels, labels_out, na = "")
 write_csv(event_articles_tone, articles_tone_out, na = "")
 
 articles_tone_unique <- event_articles_tone |>
-  distinct(article_id, publication_id, region, article_week, headline_tone)
+  distinct(article_id, publication_id, region, article_week, headline_slant)
 
 publication_weekly_tone <- articles_tone_unique |>
-  transmute(publication_id = as.character(publication_id), region, week = article_week, headline_tone) |>
+  transmute(publication_id = as.character(publication_id), region, week = article_week, headline_slant) |>
   filter(!is.na(publication_id), !is.na(region), !is.na(week)) |>
   group_by(publication_id, region, week) |>
   summarise(
-    tone = mean(headline_tone, na.rm = TRUE),
-    n_tone_articles = sum(!is.na(headline_tone)),
+    slant           = mean(headline_slant, na.rm = TRUE),
+    n_slant_articles = sum(!is.na(headline_slant)),
+    share_D         = mean(headline_slant ==  1L, na.rm = TRUE),
+    share_R         = mean(headline_slant == -1L, na.rm = TRUE),
+    share_N         = mean(headline_slant ==  0L, na.rm = TRUE),
     .groups = "drop"
   ) |>
-  mutate(tone = if_else(is.nan(tone), NA_real_, tone))
+  mutate(slant = if_else(is.nan(slant), NA_real_, slant))
 
 events_weekly_region <- event_base_clean |>
   mutate(week = map2(week_start, week_end, ~ seq(.x, .y, by = "week"))) |>
@@ -311,14 +313,11 @@ events_weekly_region <- event_base_clean |>
 
 outlet_week_panel <- publication_weekly_tone |>
   left_join(events_weekly_region, by = c("week", "region")) |>
-  mutate(
-    tone = replace_na(tone, 0),
-    in_vacancy = replace_na(in_vacancy, 0L)
-  ) |>
+  mutate(in_vacancy = replace_na(in_vacancy, 0L)) |>
   group_by(publication_id, region) |>
   complete(
     week = seq(min(week), max(week), by = "week"),
-    fill = list(tone = 0, n_tone_articles = 0L, in_vacancy = 0L)
+    fill = list(n_slant_articles = 0L, in_vacancy = 0L)
   ) |>
   ungroup() |>
   arrange(publication_id, week)
@@ -343,7 +342,7 @@ event_weeks <- vacancy_events |>
 event_study_outlet_data <- event_weeks |>
   left_join(
     outlet_week_panel |>
-      select(publication_id, region, week, tone, in_vacancy),
+      select(publication_id, region, week, slant, n_slant_articles, in_vacancy),
     by = "week",
     relationship = "many-to-many"
   ) |>
@@ -351,18 +350,21 @@ event_study_outlet_data <- event_weeks |>
   mutate(is_treated_outlet = as.integer(region == treated_region)) |>
   filter(is_treated_outlet == 1L | (is_treated_outlet == 0L & in_vacancy == 0L))
 
-if (event_study_outlet_data |> summarise(n_tone_values = n_distinct(tone)) |> dplyr::pull(n_tone_values) <= 1) {
+write_csv(event_study_outlet_data, "data/fmt/10_event_study_outlet_data.csv")
+
+if (event_study_outlet_data |> filter(!is.na(slant)) |> summarise(n = n_distinct(slant)) |> dplyr::pull(n) <= 1) {
   stop(
     glue(
-      "Weekly tone has no variation after aggregation. LLM results were saved ({labels_out}, {articles_tone_out}), but event-study estimation is not possible. Ensure headlines are classified with 0/1 (not only NA)."
+      "Weekly slant has no variation after aggregation. LLM results were saved ({labels_out}, {articles_tone_out}), but event-study estimation is not possible. Ensure headlines are classified with D/R/N (not only NA)."
     )
   )
 }
 
 event_study_outlet_mod <- fixest::feols(
-  tone ~ is_treated_outlet + i(event_time, is_treated_outlet, ref = -1) | event_id + event_time,
-  cluster = ~event_id,
-  data = event_study_outlet_data
+  slant ~ is_treated_outlet + i(event_time, is_treated_outlet, ref = -1) | event_id + event_time,
+  cluster  = ~event_id,
+  weights  = ~n_slant_articles,
+  data     = event_study_outlet_data |> filter(!is.na(slant))
 )
 
 event_study_outlet <- tibble(
@@ -384,15 +386,17 @@ event_study_outlet <- tibble(
   arrange(event_time)
 
 event_study_outlet_by_cause <- event_study_outlet_data |>
+  filter(!is.na(slant)) |>
   group_split(cause_of_death_category) |>
   map(
     possibly(
       ~ {
         cause_i <- .x$cause_of_death_category[[1]]
         mod_i <- fixest::feols(
-          tone ~ is_treated_outlet + i(event_time, is_treated_outlet, ref = -1) | event_id + event_time,
-          cluster = ~event_id,
-          data = .x
+          slant ~ is_treated_outlet + i(event_time, is_treated_outlet, ref = -1) | event_id + event_time,
+          cluster  = ~event_id,
+          weights  = ~n_slant_articles,
+          data     = .x
         )
         tibble(
           term = names(coef(mod_i)),
@@ -435,7 +439,7 @@ plot_event_study_tone_interaction_effect <- event_study_outlet |>
   labs(
     x = "Event time (weeks relative to vacancy start)",
     y = "Coefficient",
-    title = "Outlet-level event-study interaction effects (headline tone)"
+    title = "Outlet-level event-study interaction effects (partisan slant)"
   ) +
   theme_minimal(base_size = 11)
 
@@ -450,7 +454,7 @@ plot_event_study_tone_by_cause <- event_study_outlet_by_cause |>
   labs(
     x = "Event time (weeks relative to vacancy start)",
     y = "Coefficient",
-    title = "Outlet-level event-study interaction effects by cause of death (headline tone)"
+    title = "Outlet-level event-study interaction effects by cause of death (partisan slant)"
   ) +
   theme_minimal(base_size = 11)
 

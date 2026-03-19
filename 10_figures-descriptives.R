@@ -1,5 +1,6 @@
 library(tidyverse)
 library(glue)
+source("paper_style.R")
 
 in_file <- "data/fmt/event_base.csv"
 out_dir <- "paper/figures/descriptives"
@@ -21,21 +22,11 @@ cause_labels <- c(
   violence = "Violence",
   unknown = "Unknown"
 )
-brew <- list(
-  set1 = RColorBrewer::brewer.pal(8, "Set1"),
-  set2 = RColorBrewer::brewer.pal(8, "Set2"),
-  blues = RColorBrewer::brewer.pal(9, "Blues"),
-  greys = RColorBrewer::brewer.pal(9, "Greys"),
-  dark2 = RColorBrewer::brewer.pal(8, "Dark2"),
-  beige = RColorBrewer::brewer.pal(9, "YlOrBr")[1]
-)
+col_timeline_bg    <- "#f2efe9"   # warm off-white for full-period baseline
+col_timeline_span  <- pal$main   # vacancy periods
+col_timeline_tick  <- pal$ref    # special election ticks
 
-theme_descriptive <- theme_classic(base_size = 11) +
-  theme(
-    plot.title = element_text(face = "bold"),
-    legend.title = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
-  )
+theme_descriptive <- theme_paper
 
 events <- read_csv(in_file, show_col_types = FALSE) |>
   distinct(special_election_id, .keep_all = TRUE) |>
@@ -64,14 +55,22 @@ deaths <- events |>
   )
 
 # 1) Histogram: deaths by cause of death
+cause_colors <- c(
+  "Illness (fast)"   = pal$main,
+  "Illness (slow)"   = "#74b9d4",
+  "Unclear / Unknown"= pal$light,
+  "Accident"         = pal$second,
+  "Violence"         = pal$ref
+)
+
 plot_01_deaths_cause <- deaths |>
   count(cause, name = "n") |>
   mutate(cause = fct_reorder(cause, n)) |>
   ggplot(aes(cause, n, fill = cause)) +
   geom_col(width = 0.72) +
-  geom_text(aes(label = n), hjust = -0.1, size = 3.2) +
+  geom_text(aes(label = n), hjust = -0.1, size = 3.2, color = "grey30") +
   coord_flip() +
-  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_fill_manual(values = cause_colors, guide = "none") +
   scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
   labs(
     title = "Deaths by Cause of Death",
@@ -84,7 +83,7 @@ plot_01_deaths_cause <- deaths |>
 plot_02_special_elections_over_time <- events |>
   count(decade, name = "n") |>
   ggplot(aes(decade, n)) +
-  geom_col(fill = brew$greys[7], width = 8) +
+  geom_col(fill = pal$null, width = 8) +
   scale_x_continuous(breaks = scales::breaks_pretty(n = 12)) +
   labs(
     title = "Special Elections Over Time (Decade Aggregation)",
@@ -99,7 +98,7 @@ plot_03_special_elections_within_term <- events |>
   mutate(month_in_term = pmin(((day_in_congress - 1L) %/% 30L) + 1L, 24L)) |>
   count(month_in_term, name = "n") |>
   ggplot(aes(month_in_term, n)) +
-  geom_col(fill = brew$blues[7], width = 0.88) +
+  geom_col(fill = pal$main, width = 0.88) +
   scale_x_continuous(breaks = seq(1, 24, 2)) +
   labs(
     title = "Special Elections Within a Congressional Term",
@@ -113,7 +112,7 @@ plot_04_vacancy_boxplot_over_time <- events |>
   filter(!is.na(vacancy_days_plot)) |>
   mutate(decade = factor(decade)) |>
   ggplot(aes(decade, vacancy_days_plot)) +
-  geom_boxplot(fill = brew$blues[4], color = brew$blues[9], outlier.alpha = 0.25, linewidth = 0.3) +
+  geom_boxplot(fill = pal$pre, color = pal$main, outlier.alpha = 0.25, linewidth = 0.3) +
   labs(
     title = "Vacancy Duration Over Time",
     x = "Decade",
@@ -134,8 +133,8 @@ vacancy_region_year <- events |>
 # 5b) Vacancy duration over time by region (faceted)
 plot_05b_vacancy_region_facets <- vacancy_region_year |>
   ggplot(aes(year, vacancy_days_median)) +
-  geom_point(color = brew$dark2[3], alpha = 0.3) +
-  geom_smooth(se = FALSE, span = 0.22, color = brew$set1[1], linewidth = 0.9) +
+  geom_point(color = pal$null, alpha = 0.3) +
+  geom_smooth(se = FALSE, span = 0.22, color = pal$main, linewidth = 0.9) +
   facet_wrap(vars(region), ncol = 2, scales = "free_y") +
   scale_x_continuous(breaks = scales::breaks_pretty(n = 8)) +
   labs(
@@ -233,14 +232,14 @@ plot_06_region_timeline <- ggplot() +
     data = region_base,
     aes(x = x_min, xend = x_max, y = y, yend = y),
     linewidth = 8.8,
-    color = brew$beige,
+    color = col_timeline_bg,
     lineend = "butt"
   ) +
   geom_segment(
     data = vacancy_region_spans,
     aes(x = start, xend = end, y = y, yend = y),
     linewidth = 8,
-    color = brew$blues[6],
+    color = col_timeline_span,
     alpha = 0.85,
     lineend = "butt"
   ) +
@@ -248,7 +247,7 @@ plot_06_region_timeline <- ggplot() +
     data = special_election_ticks,
     aes(x = special_election_date, xend = special_election_date, y = y - 0.3, yend = y + 0.3),
     linewidth = 0.25,
-    color = brew$set1[1],
+    color = col_timeline_tick,
     alpha = 0.95
   ) +
   scale_y_continuous(
@@ -261,7 +260,7 @@ plot_06_region_timeline <- ggplot() +
     title = "Regional Vacancy Timeline with Special Elections",
     x = "Year",
     y = NULL,
-    caption = "Beige bars = full timeline, blue bars = vacancy periods, red ticks = special elections"
+    caption = "Light bars = full congressional service, blue bars = vacancy periods, red ticks = special elections"
   ) +
   theme_descriptive
 
@@ -271,14 +270,14 @@ plot_06a_region_timeline_1920_2020 <- ggplot() +
     data = region_base_1920_2020,
     aes(x = x_min, xend = x_max, y = y, yend = y),
     linewidth = 8.8,
-    color = brew$beige,
+    color = col_timeline_bg,
     lineend = "butt"
   ) +
   geom_segment(
     data = vacancy_region_spans_1920_2020,
     aes(x = start, xend = end, y = y, yend = y),
     linewidth = 8,
-    color = brew$blues[6],
+    color = col_timeline_span,
     alpha = 0.85,
     lineend = "butt"
   ) +
@@ -286,7 +285,7 @@ plot_06a_region_timeline_1920_2020 <- ggplot() +
     data = special_election_ticks_1920_2020,
     aes(x = special_election_date, xend = special_election_date, y = y - 0.3, yend = y + 0.3),
     linewidth = 0.25,
-    color = brew$set1[1],
+    color = col_timeline_tick,
     alpha = 0.95
   ) +
   scale_y_continuous(
@@ -299,7 +298,7 @@ plot_06a_region_timeline_1920_2020 <- ggplot() +
     title = "Regional Vacancy Timeline with Special Elections (1920-2020)",
     x = "Year",
     y = NULL,
-    caption = "Beige bars = full timeline, blue bars = vacancy periods, red ticks = special elections"
+    caption = "Light bars = full congressional service, blue bars = vacancy periods, red ticks = special elections"
   ) +
   theme_descriptive
 
@@ -309,14 +308,14 @@ plot_06b_state_timeline_1920_2020 <- ggplot() +
     data = state_base_1920_2020,
     aes(x = x_min, xend = x_max, y = state, yend = state),
     linewidth = 2.9,
-    color = brew$beige,
+    color = col_timeline_bg,
     lineend = "butt"
   ) +
   geom_segment(
     data = vacancy_state_spans_1920_2020,
     aes(x = start, xend = end, y = state, yend = state),
     linewidth = 2.5,
-    color = brew$blues[6],
+    color = col_timeline_span,
     alpha = 0.85,
     lineend = "butt"
   ) +
@@ -325,7 +324,7 @@ plot_06b_state_timeline_1920_2020 <- ggplot() +
     aes(x = special_election_date, y = state),
     shape = 124,
     size = 1.8,
-    color = brew$set1[1],
+    color = col_timeline_tick,
     alpha = 0.95
   ) +
   facet_wrap(vars(region), ncol = 2, scales = "free_y") +
@@ -335,7 +334,7 @@ plot_06b_state_timeline_1920_2020 <- ggplot() +
     title = "State Vacancy Timeline by Region with Special Elections (1920-2020)",
     x = "Year",
     y = NULL,
-    caption = "Beige bars = full timeline, blue bars = vacancy periods, red ticks = special elections"
+    caption = "Light bars = full congressional service, blue bars = vacancy periods, red ticks = special elections"
   ) +
   theme_descriptive +
   theme(axis.text.y = element_text(size = 5))

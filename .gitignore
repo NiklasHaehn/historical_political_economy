@@ -4,4 +4,20 @@
 .httr-oauth
 .DS_Store
 .quarto
+
+# Data
 data/raw/
+data/fmt/
+MP_election_data.csv
+
+# Generated output
+Rplots.pdf
+old/
+
+# Media
+*.mp4
+
+# Word lock files
+~$*.docx
+~$*.xlsx
+~$*.pptx
